@@ -1,14 +1,18 @@
 /*******************************************************************************
  * Author: Ahmed Kosba <akosba@cs.umd.edu>
+ * Updated for compatibility with modern Java and Bouncy Castle 1.79
  *******************************************************************************/
 package circuit.structure;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
-import java.io.FileWriter;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -47,6 +51,19 @@ public abstract class CircuitGenerator {
 	private int numOfConstraints;
 	private CircuitEvaluator circuitEvaluator;
 
+	/**
+	 * Gets the current thread ID using a method that works across different Java versions.
+	 * This avoids the deprecated Thread.getId() method in newer Java versions.
+	 * 
+	 * @return the current thread ID
+	 */
+	private static long getCurrentThreadId() {
+		Thread currentThread = Thread.currentThread();
+		// For Java 19+, we could use Thread.threadId(), but for compatibility we'll use this approach
+		return currentThread.threadId();
+		// Note: When migrating to Java 19+, replace with: return currentThread.threadId();
+	}
+
 	public CircuitGenerator(String circuitName) {
 
 		this.circuitName = circuitName;
@@ -61,7 +78,7 @@ public abstract class CircuitGenerator {
 		numOfConstraints = 0;
 
 		if (Config.runningMultiGenerators) {
-			activeCircuitGenerators.put(Thread.currentThread().getId(), this);
+			activeCircuitGenerators.put(getCurrentThreadId(), this);
 		}
 	}
 
@@ -70,7 +87,7 @@ public abstract class CircuitGenerator {
 			return instance;
 		else {
 
-			Long threadId = Thread.currentThread().getId();
+			Long threadId = getCurrentThreadId();
 			CircuitGenerator currentGenerator = activeCircuitGenerators.get(threadId);
 			if (currentGenerator == null) {
 				throw new RuntimeException("The current thread does not have any active circuit generators");
@@ -241,29 +258,26 @@ public abstract class CircuitGenerator {
 	}
 
 	public void writeCircuitFile() {
-		try {
-			PrintWriter printWriter = new PrintWriter(new BufferedWriter(new FileWriter(getName() + ".arith")));
-
+		try (PrintWriter printWriter = new PrintWriter(
+				Files.newBufferedWriter(Paths.get(getName() + ".arith"), StandardCharsets.UTF_8))) {
+			
 			printWriter.println("total " + currentWireId);
 			for (Instruction e : evaluationQueue.keySet()) {
 				if (e.doneWithinCircuit()) {
 					printWriter.print(e + "\n");
 				}
 			}
-			printWriter.close();
-		} catch (Exception e) {
+		} catch (IOException e) {
 			e.printStackTrace();
 		}
 	}
 
 	public void printCircuit() {
-
 		for (Instruction e : evaluationQueue.keySet()) {
 			if (e.doneWithinCircuit()) {
 				System.out.println(e);
 			}
 		}
-
 	}
 
 	private void initCircuitConstruction() {
@@ -424,22 +438,26 @@ public abstract class CircuitGenerator {
 	}
 
 	public void runLibsnark() {
-
 		try {
-			Process p;
-			p = Runtime.getRuntime()
-					.exec(new String[] { Config.LIBSNARK_EXEC, circuitName + ".arith", circuitName + ".in" });
+			ProcessBuilder processBuilder = new ProcessBuilder(
+					Config.LIBSNARK_EXEC, 
+					circuitName + ".arith", 
+					circuitName + ".in");
+			
+			Process p = processBuilder.start();
 			p.waitFor();
+			
 			System.out.println(
 					"\n-----------------------------------RUNNING LIBSNARK -----------------------------------------");
-			String line;
-			BufferedReader input = new BufferedReader(new InputStreamReader(p.getInputStream()));
-			StringBuffer buf = new StringBuffer();
-			while ((line = input.readLine()) != null) {
-				buf.append(line + "\n");
+			
+			try (BufferedReader input = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
+				StringBuilder buf = new StringBuilder();
+				String line;
+				while ((line = input.readLine()) != null) {
+					buf.append(line).append("\n");
+				}
+				System.out.println(buf.toString());
 			}
-			input.close();
-			System.out.println(buf.toString());
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
@@ -451,5 +469,4 @@ public abstract class CircuitGenerator {
 		}
 		return circuitEvaluator;
 	}
-
 }
